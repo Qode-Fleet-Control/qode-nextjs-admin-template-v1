@@ -16,7 +16,7 @@
 # compose's own network only, not a bare `docker run`.
 services:
   app:
-    build: .            # your Dockerfile: it must serve on 0.0.0.0:$PORT
+    build: .
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
@@ -40,3 +40,8 @@ services:
       SMTP_HOST:
       SMTP_PORT:
       SMTP_URL:
+      # Auth.js (see .env.example); unset AUTH_SECRET → a random one per container
+      AUTH_SECRET:
+      AUTH_GOOGLE_ID:
+      AUTH_GOOGLE_SECRET:
+      ADMIN_EMAILS:

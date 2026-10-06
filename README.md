@@ -1,164 +1,140 @@
-# fleet-template-v1
+# Next.js Admin
 
-## What This Template Is
+Provisioned from [`Qode-Fleet-Control/fleet-template-v1`](https://github.com/Qode-Fleet-Control/fleet-template-v1) — the fleet
+lifecycle contract (`bin/`, `fleet.conf`, `compose.yaml`, deploy workflows) with
+the Next.js Admin starter laid on top. It was the fleet's "Template Library"
+template (`templates/nextjs-admin` in agent-fleet) until 2026-10-06, and is now a
+scaffold like the others, mounted at `typescript/nextjs-admin` in
+[`fleet-scaffolds`](https://github.com/Qode-Fleet-Control/fleet-scaffolds).
 
-`fleet-template-v1` is a **language-agnostic app lifecycle harness** for apps
-managed by the fleet platform. It gives any app — Node, Python, Go, a Docker
-Compose stack, anything — a uniform way to be deployed and controlled, without
-the fleet needing to know a single thing about your stack.
+## Fleet lifecycle
 
-The fleet injects runtime variables into the environment (`PORT`, `DATABASE_URL`,
-the workspace's shared services) and calls `./bin/run` to deploy. **On the fleet every
-app runs as containers** — `docker compose`, in the coordinator's private docker — so a
-project also ships a `Dockerfile` and `compose.yaml` (see "The docker runtime" below). Everything project-specific —
-how to install, build, and start your app — lives in **one file: `fleet.conf`**.
-That is the only file you edit per project.
+`fleet.conf` drives every script in `bin/`. On the fleet the app runs as a container
+(`docker compose up`); the plain commands are for work without docker
+(`FLEET_RUNTIME=process bin/run`).
 
-## Repository Structure
+| step | command |
+|---|---|
+| install | `corepack pnpm install --frozen-lockfile` |
+| build | `corepack pnpm build` |
+| start | `corepack pnpm exec next start -H 0.0.0.0 -p $PORT` |
 
-```
-fleet.conf        ← the only file you edit per project
-compose.yaml      ← the app as containers (the fleet's runtime); builds your Dockerfile
-.env              ← local-only env vars (gitignored)
-bin/
-  _common.sh      ← shared logic; never edit this
-  run             ← install + build + start (called by the fleet)
-  start           ← start only (no rebuild)
-  restart         ← stop + full run
-  reload          ← hot-reload config without rebuild
-  stop            ← stop the running process
-```
+    ./bin/run       # install, build, start in the foreground
+    ./bin/start     # start from existing build artifacts
+    ./bin/restart   # rebuild and restart
+    ./bin/stop      # stop whatever holds the port
 
-## The One File You Edit: `fleet.conf`
+Listens on `$PORT` (default `3000`); the health check hits `/login`, the one page
+an anonymous request gets a 200 from (`/` redirects there).
 
-`fleet.conf` is sourced as shell by the lifecycle scripts. Fill in the commands
-for your stack; leave any command empty (`''`) to skip that step.
+**Auth on the fleet.** Set `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` and
+`ADMIN_EMAILS` in the workspace env; compose passes them through. Without
+`AUTH_SECRET` the container makes a random one at start, so the app still boots,
+but sessions end on every restart. Register
+`https://<app host>/api/auth/callback/google` as a redirect URI. `AUTH_TRUST_HOST`
+is set, since the fleet serves the app behind its proxy.
 
-```sh
-NAME="my-app"           # label shown in fleet logs
-PORT="3000"             # default port (fleet overrides via $PORT env var)
-HEALTH_PATH="/"         # HTTP path that returns 200 when the app is ready
+A full-stack admin dashboard starter built with the Next.js App Router. It ships
+with authentication, role-based route protection, a component library, and four
+ready-made pages so you can start building your own admin surface immediately.
 
-INSTALL_CMD='npm ci'
-BUILD_CMD='npm run build'
-START_CMD='node dist/server.js'   # must listen on $PORT; run in foreground
-RELOAD_CMD=''           # optional; empty → falls back to stop+start
+## Tech stack
 
-DOCKER_BUILD_CMD='docker compose build'                  # how the FLEET runs it
-DOCKER_START_CMD='docker compose up --remove-orphans'
-DOCKER_RELOAD_CMD=''
-```
+- [Next.js 14](https://nextjs.org/docs) — App Router, React Server Components
+- [Auth.js v5](https://authjs.dev) (`next-auth@5`) — Google OAuth + JWT sessions
+- [shadcn/ui](https://ui.shadcn.com) — accessible components built on Radix UI
+- [Recharts](https://recharts.org) — charts
+- [Tailwind CSS](https://tailwindcss.com) — styling
+- [TanStack Table](https://tanstack.com/table) — the reusable DataTable
+- [React Hook Form](https://react-hook-form.com) + [Zod](https://zod.dev) — forms and validation
 
-> **Critical rule:** single-quote any command that uses `$PORT`. Single quotes defer variable expansion to **runtime** — when the
-> command actually runs, with the fleet-injected value — rather than at the
-> moment `fleet.conf` is sourced (when that value isn't set yet). Use
-> `START_CMD='gunicorn app:app --bind 0.0.0.0:$PORT'`, never double quotes.
+## Prerequisites
 
-## The docker runtime
+- Node 18 or newer
+- [pnpm](https://pnpm.io)
+- Google OAuth credentials (a client ID and secret from the
+  [Google Cloud Console](https://console.cloud.google.com/apis/credentials))
 
-`bin/_common.sh` picks the commands by `FLEET_RUNTIME`:
+## Quick start
 
-| `FLEET_RUNTIME` | Runs | Where |
-| --- | --- | --- |
-| `docker` (default) | `DOCKER_BUILD_CMD` → `DOCKER_START_CMD` | the fleet: every coordinator has a private docker (sysbox docker-in-docker) |
-| `process` | `INSTALL_CMD` → `BUILD_CMD` → `START_CMD` | the QA tester's self-host, and local work without docker |
-| `auto` | docker when `FLEET_APP_DIND` is set, else process | |
-
-On the fleet the coordinator itself holds `$PORT` and forwards it into its private
-docker, so the app **must** run as a container publishing `${PORT}:${PORT}` — a plain
-process cannot bind the port, and the coordinator refuses to deploy a `fleet.conf`
-without `DOCKER_START_CMD`. `compose.yaml` must:
-
-- build the app's `Dockerfile`, serving on `0.0.0.0:$PORT` inside the container;
-- publish `"${PORT:-3000}:${PORT:-3000}"` and set `PORT: ${PORT:-3000}`;
-- list the fleet's variables under `environment:` **without values** (`DATABASE_URL:`,
-  `REDIS_URL:`, `S3_ENDPOINT:` …) so compose passes them through — the fleet attaches the
-  workspace's Postgres / Redis / MinIO / Mailpit to the private docker under the very
-  hostnames those URLs name;
-- keep any database it brings for local work under a `local` profile, so it never starts
-  on the fleet.
-
-`compose.yaml` here is that skeleton. Locally, `PORT=3001 bin/run` runs the docker
-runtime; `FLEET_RUNTIME=process PORT=3001 bin/run` runs the plain process.
-
-## How the Lifecycle Works
-
-| Script | What it does | When to use |
-| --- | --- | --- |
-| `bin/run` | `INSTALL_CMD` → `BUILD_CMD` → `START_CMD` | Fleet deploy, fresh start |
-| `bin/start` | `START_CMD` only | Restart without rebuild |
-| `bin/restart` | stop + `bin/run` | After a code/dep change |
-| `bin/reload` | `RELOAD_CMD`, or stop+start if empty | After a config-only change |
-| `bin/stop` | Kill by pidfile, `docker compose down`, free the port | Tear down |
-
-> The process PID is written to `.fleet/app.pid` so subsequent `stop`/`restart`
-> calls can find and terminate it reliably. If the pidfile is missing or stale,
-> `stop` falls back to freeing whatever is listening on `$PORT` — never its own caller,
-> and never on a coordinator with a private docker, where `$PORT` is the coordinator's.
-
-## How to Apply This to Your Project
-
-### Step 1 — Copy the template into your repo
-
-```sh
-cp -r fleet-template-v1/* my-project/
+```bash
+git clone <your-repo-url>
+cd nextjs-admin
+pnpm install
+cp .env.example .env.local
+# fill in the values described below, then:
+pnpm dev
 ```
 
-Or, if starting fresh, just clone it and work from `main`.
+Open [http://localhost:3000](http://localhost:3000). The root route redirects to
+`/dashboard`, which requires an admin session, so you'll land on `/login` first.
 
-### Step 2 — Edit `fleet.conf` (the only required change)
+## Environment variables
 
-Fill in your stack's commands. Per-stack examples:
+Copy `.env.example` to `.env.local` and set each value:
 
-```sh
-# Node.js
-INSTALL_CMD='npm ci'
-BUILD_CMD='npm run build'
-START_CMD='node dist/index.js'
+| Variable             | Description                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `AUTH_SECRET`        | Secret used to encrypt the session JWT. Generate one with `openssl rand -base64 32`.            |
+| `AUTH_GOOGLE_ID`     | Google OAuth client ID for the Google sign-in provider.                                         |
+| `AUTH_GOOGLE_SECRET` | Google OAuth client secret that pairs with `AUTH_GOOGLE_ID`.                                     |
+| `ADMIN_EMAILS`       | Comma-separated list of emails granted the `admin` role. Anyone else signs in as a normal user. |
 
-# Python (Gunicorn)
-INSTALL_CMD='pip install -r requirements.txt'
-BUILD_CMD=''
-START_CMD='gunicorn app:app --bind 0.0.0.0:$PORT'
+When registering the OAuth client, add
+`http://localhost:3000/api/auth/callback/google` as an authorized redirect URI.
 
-# Go
-INSTALL_CMD=''
-BUILD_CMD='go build -o ./out/server ./cmd/server'
-START_CMD='./out/server'
+## Pages
 
-# Docker runtime (required on the fleet, alongside one of the above)
-DOCKER_BUILD_CMD='docker compose build'
-DOCKER_START_CMD='docker compose up --remove-orphans'
+- **Dashboard** (`/dashboard`) — stat cards for headline metrics, an activity
+  chart, and a recent-activity table.
+- **Users** (`/users`) — a searchable DataTable with create and delete (CRUD)
+  actions wired through `lib/api.ts`.
+- **Analytics** (`/analytics`) — usage trends and performance over time, driven
+  by a date-range picker and Recharts visualizations.
+- **Settings** (`/settings`) — tabbed forms for General, Security, and
+  Notifications preferences, validated with React Hook Form and Zod.
+
+## Customization
+
+### Adding a nav item
+
+Nav links live in `components/layout/Sidebar.tsx`. Add an entry to the `navItems`
+array with an `href`, a `label`, and a [lucide](https://lucide.dev) `icon`:
+
+```ts
+const navItems: NavItem[] = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  // ...
+  { href: "/reports", label: "Reports", icon: FileText },
+];
 ```
 
-### Step 3 — Set local env vars in `.env` (gitignored)
+Create the matching page at `app/(admin)/reports/page.tsx`. Because it lives in
+the `(admin)` route group, `middleware.ts` protects it automatically.
 
-```sh
-APP_NAME=My App
-DATABASE_URL=postgres://localhost/mydb
+### Swapping the auth provider
+
+The Google provider is configured in `lib/auth.ts`. Swap it for another
+[Auth.js provider](https://authjs.dev/getting-started/authentication/oauth) by
+replacing the `providers` array and its environment variables — for example
+GitHub:
+
+```ts
+import GitHub from "next-auth/providers/github";
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  providers: [GitHub],
+  // keep the jwt/session callbacks that assign the admin role
+});
 ```
 
-### Step 4 — Verify standalone
+The `jwt` callback assigns the `admin` role from `ADMIN_EMAILS`; keep it (or
+adapt its role logic) so `middleware.ts` can continue to gate admin routes.
 
-```sh
-PORT=3001 bin/run      # docker runtime: builds the image, serves on 3001
-curl http://localhost:3001/   # should 200
-FLEET_RUNTIME=process PORT=3002 bin/run   # the plain process the QA tester runs
-```
+## Learn more
 
-### Step 5 — Connect to the fleet
-
-Point the fleet at your repo. It will clone it, inject `PORT` / `DATABASE_URL`,
-and call `bin/run`. As long as your container listens on `$PORT` and `HEALTH_PATH`
-returns 200, the fleet will mark the app healthy.
-
-## Key Invariants
-
-- **On the fleet the app runs as containers** (`DOCKER_START_CMD`, `compose.yaml`).
-- **`START_CMD` must run in the foreground and listen on `$PORT`.** Do not use a
-  dev server — HMR / hot-reload chunks 404 behind the ingress and will break the
-  app.
-- **Never put secrets in `fleet.conf`** — it's committed. Use `.env` locally;
-  the fleet injects secrets via the environment.
-- **`bin/_common.sh` is shared infrastructure** — don't edit it per project. All
-  project-specific configuration belongs in `fleet.conf`.
+- [Next.js App Router](https://nextjs.org/docs/app)
+- [Auth.js](https://authjs.dev)
+- [shadcn/ui](https://ui.shadcn.com)
+- [Recharts](https://recharts.org)
+- [Tailwind CSS](https://tailwindcss.com/docs)
