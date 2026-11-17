@@ -73,3 +73,4 @@ alias.
   (`bg-background`, `text-muted-foreground`, `bg-sidebar`, …) rather than raw colors.
 - Import through the `@/` path alias, not relative `../../` chains.
 - Validate forms with React Hook Form + Zod, following the `components/settings/` forms.
+- Keep the request logger: every HTTP request must log one JSON line with status and duration (Monitoring tab).
