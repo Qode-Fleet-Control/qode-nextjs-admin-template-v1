@@ -25,6 +25,9 @@ RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/public ./public
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
+# KEEP THIS: one log line per request (status + duration) is what the workspace Monitoring tab charts.
+# request-log.cjs is preloaded by the CMD below (`node -r ./request-log.cjs`).
+COPY --chown=app:app request-log.cjs ./
 USER app
 EXPOSE 3000
-CMD ["sh", "-c", "export AUTH_SECRET=\"${AUTH_SECRET:-$(node -e 'console.log(require(\"crypto\").randomBytes(32).toString(\"base64\"))')}\"; exec node server.js"]
+CMD ["sh", "-c", "export AUTH_SECRET=\"${AUTH_SECRET:-$(node -e 'console.log(require(\"crypto\").randomBytes(32).toString(\"base64\"))')}\"; exec node -r ./request-log.cjs server.js"]
